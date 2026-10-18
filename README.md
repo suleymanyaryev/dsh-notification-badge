@@ -253,6 +253,6 @@ page load.
 
 ## License
 
-MIT. The notification half is derived from [`dsh-notification`](https://github.com/nishit130/dsh-notification)
+MIT © 2026 Suleyman Yaryev <suleymanyaryev@gmail.com>. The notification half is derived from [`dsh-notification`](https://github.com/nishit130/dsh-notification)
 by Nishit Patel, and the icon badge from `dsh-dock-badge`; both were MIT-licensed, and the original
 copyright notice is retained in [LICENSE](LICENSE).
