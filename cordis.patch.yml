@@ -1,0 +1,8 @@
+# Layer contributed when a profile lists this bundle (dsh plugin add dsh-notification-badge).
+# Users can override any of these config values in their profile's cordis.patch.yml.
+#
+# `id` is the profile entry id: it names this plugin's settings namespace, so the
+# browser half reads its live options from the same id (ENTRY_ID in client.js).
+- insert:
+    - id: notify-badge
+      name: dsh-notification-badge

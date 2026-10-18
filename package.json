@@ -1,0 +1,55 @@
+{
+  "name": "dsh-notification-badge",
+  "version": "0.1.0",
+  "description": "Desktop, browser and webhook notifications plus an app-icon attention badge for DeepSeek Harness — know when your agent finishes a turn, hits an error, or waits for your approval.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js",
+    "test": "npm run check && node --test"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "cordis",
+    "notifications",
+    "desktop-notifications",
+    "webhook",
+    "badge",
+    "dock-badge",
+    "badging-api",
+    "attention"
+  ],
+  "license": "MIT",
+  "engines": {
+    "dsh": "^0.2.1-rc.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Notifications & Badge",
+    "description": "Desktop, browser and webhook notifications plus an app-icon attention badge when your agent finishes a turn, errors, or waits for your approval."
+  }
+}
