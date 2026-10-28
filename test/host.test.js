@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -93,6 +93,27 @@ test('resolveSoundPath returns absolute files that exist', () => {
   assert.equal(resolveSoundPath(join(dir, 'nope.wav')), null)
 })
 
+test('resolveSoundPath never resolves to a directory', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-notification-sound-'))
+  const folder = join(dir, 'chime.wav')
+  mkdirSync(folder)
+  assert.equal(resolveSoundPath(dir), null)
+  assert.equal(resolveSoundPath(folder), null)
+})
+
+test('resolveSoundPath re-checks a cached file before reusing it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-notification-sound-'))
+  const file = join(dir, 'chime.wav')
+  writeFileSync(file, '')
+  assert.equal(resolveSoundPath(file), file)
+  assert.equal(resolveSoundPath(file), file)
+  rmSync(file)
+  assert.equal(resolveSoundPath(file), null)
+  // A miss is not cached: the file is found once it exists again.
+  writeFileSync(file, '')
+  assert.equal(resolveSoundPath(file), file)
+})
+
 /* --- desktop notifications ------------------------------------------------ */
 
 test('desktopNotify survives an asynchronous spawn failure', () => {
@@ -142,6 +163,21 @@ test('desktopNotify plays a configured file through afplay on macOS', () => {
     return
   }
   assert.deepEqual(commands.map((call) => call.command), ['afplay', 'osascript'])
+})
+
+test('desktopNotify skips afplay for a sound path that is a directory', () => {
+  if (process.platform !== 'darwin') return
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-notification-play-'))
+  const commands = []
+  const make = () => {
+    const emitter = new EventEmitter()
+    emitter.unref = () => {}
+    return emitter
+  }
+  desktopNotify('t', 'b', { sound: dir, spawn: (command, args) => { commands.push({ command, args }); return make() } })
+  assert.deepEqual(commands.map((call) => call.command), ['osascript'])
+  // A path is never handed to AppleScript's `sound name` lookup.
+  assert.ok(!commands[0].args[1].includes('sound name'), commands[0].args[1])
 })
 
 test('desktopNotify plays a named system sound through afplay on macOS', () => {

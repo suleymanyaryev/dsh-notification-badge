@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { extname, isAbsolute, join } from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
@@ -111,49 +111,65 @@ function expandHome(sound) {
 }
 
 /**
- * Whether a configured sound denotes a file (a path, or an audio extension to
- * look up in the sound directories) rather than a bare system sound name.
+ * How a configured sound is looked up: its candidate files, strongest first,
+ * and whether the value denotes a file (a path, or an audio extension to look
+ * up in the sound directories) rather than a bare system sound name.
  */
-function looksLikeFile(sound) {
+function soundLookup(sound) {
   const expanded = expandHome(sound)
-  return isAbsolute(expanded) || expanded.includes('/')
-    || AUDIO_EXTENSIONS.has(extname(expanded).toLowerCase())
-}
-
-/** Candidate files for a configured sound, strongest first. */
-function soundCandidates(sound) {
-  const expanded = expandHome(sound)
-  if (isAbsolute(expanded)) return [expanded]
-  if (expanded.includes('/')) return SOUND_DIRS.map((dir) => join(dir, expanded))
+  if (isAbsolute(expanded)) return { isFile: true, candidates: [expanded] }
   // A value that already names an audio extension is an exact file name; a
   // bare name is a system sound, which afplay needs with its extension.
-  if (AUDIO_EXTENSIONS.has(extname(expanded).toLowerCase())) {
-    return SOUND_DIRS.map((dir) => join(dir, expanded))
+  if (expanded.includes('/') || AUDIO_EXTENSIONS.has(extname(expanded).toLowerCase())) {
+    return { isFile: true, candidates: SOUND_DIRS.map((dir) => join(dir, expanded)) }
   }
   const candidates = []
   for (const dir of SOUND_DIRS) {
     for (const extension of AUDIO_EXTENSIONS) candidates.push(join(dir, `${expanded}${extension}`))
   }
-  return candidates
+  return { isFile: false, candidates }
 }
 
+/** Whether a path is a regular file; a directory or an unreadable path is not. */
+function isRegularFile(path) {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+// The last successful resolution, so a burst of notifications for the same
+// sound costs one stat instead of a scan of every candidate. The cached file is
+// re-checked on every use, so a removed file is rescanned; misses are never
+// cached, so a file added later is still found.
+let lastResolved = { sound: null, path: null }
+
 /**
- * Resolve a configured sound to an existing audio file; null means no file was
- * found. A bare system sound name is looked up with every supported extension;
- * `null` for such a name leaves AppleScript's `sound name` as the fallback.
+ * Resolve a configured sound to `{ path, isFile }`: the existing audio file it
+ * names (null when none was found) and whether the value denotes a file at all.
+ * A bare system sound name is looked up with every supported extension; a null
+ * path for such a name leaves AppleScript's `sound name` as the fallback.
  */
+function resolveSound(sound) {
+  if (!sound) return { path: null, isFile: false }
+  const { isFile, candidates } = soundLookup(sound)
+  if (lastResolved.sound === sound && isRegularFile(lastResolved.path)) return { path: lastResolved.path, isFile }
+  const path = candidates.find(isRegularFile) ?? null
+  lastResolved = path ? { sound, path } : { sound: null, path: null }
+  return { path, isFile }
+}
+
+/** Resolve a configured sound to an existing audio file; null means no file was found. */
 export function resolveSoundPath(sound) {
-  if (!sound) return null
-  return soundCandidates(sound).find((candidate) => existsSync(candidate)) ?? null
+  return resolveSound(sound).path
 }
 
 /**
- * Play a configured sound detached; returns whether a file was found. Names are
- * resolved to files so afplay, not the notification center, owns playback.
- * Never throws.
+ * Play a resolved sound file detached; returns whether playback was started.
+ * afplay, not the notification center, owns playback. Never throws.
  */
-function playSound(spawn, sound) {
-  const path = resolveSoundPath(sound)
+function playSound(spawn, path) {
   if (!path) return false
   try {
     spawn('afplay', [path], { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
@@ -187,12 +203,13 @@ export function desktopNotify(title, body, { spawn = nodeSpawn, sound = '', wind
   try {
     if (platform === 'darwin') {
       const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-      const played = playSound(spawn, sound)
+      const { path, isFile } = resolveSound(sound)
+      const played = playSound(spawn, path)
       // afplay got the resolved file, so the notification needs no `sound name`
       // (which Script Editor's own sound setting can silence). Only an
       // unresolved bare name still falls back to AppleScript's lookup; a
       // configured path that did not resolve must not be handed to it.
-      const soundClause = sound && !played && !looksLikeFile(sound) ? ` sound name "${esc(sound)}"` : ''
+      const soundClause = sound && !played && !isFile ? ` sound name "${esc(sound)}"` : ''
       spawn('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}"${soundClause}`],
         { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     } else if (platform === 'linux') {
