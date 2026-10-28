@@ -1,6 +1,6 @@
 {
   "name": "dsh-notification-badge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop, browser and webhook notifications plus an app-icon attention badge for DeepSeek Harness — know when your agent finishes a turn, hits an error, or waits for your approval.",
   "author": {
     "name": "Suleyman Yaryev",

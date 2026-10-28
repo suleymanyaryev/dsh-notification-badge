@@ -128,7 +128,7 @@ Override the row in your profile's `cordis.patch.yml`:
 | `browserOnlyWhenHidden` | boolean | `true` | Suppress popups while you are looking at the window |
 | `webhookUrl` | string | `''` | Optional POST target (Slack-compatible payload) |
 | `title` | string | `'DeepSeek Harness'` | Title for desktop and browser notifications |
-| `sound` | string | `'Glass'` | macOS: a system sound name (looked up in `~/Library/Sounds`, `/Library/Sounds`, `/System/Library/Sounds`) or an audio file path (absolute, or relative to `~/Library/Sounds`); `''` is silent |
+| `sound` | string | `'Glass'` | macOS: a system sound name such as `Glass` (resolved to an audio file in `~/Library/Sounds`, `/Library/Sounds` or `/System/Library/Sounds`) or an audio file path (absolute, or relative to `~/Library/Sounds`); the resolved file plays through `afplay`; `''` is silent |
 | `windowsAppId` | string | `''` | Windows: AppUserModelID the toast is attributed to; empty uses the posting process's registered identity |
 | `badge` | boolean | `true` | Put the attention count on the application icon |
 | `badgeDesktopOnly` | boolean | `true` | Only badge in the desktop shell (a browser tab has no app icon) |
@@ -141,6 +141,20 @@ Override the row in your profile's `cordis.patch.yml`:
 Every field is declared `.volatile()`, so the values are **live**: the `dsh-settings` document
 serves them, and a change applies without a reload. `webhookUrl` is `role('secret')`, so its value
 is stripped before settings cross the wire to the browser.
+
+### macOS notification sound
+
+On macOS the host side posts the desktop banner with `osascript`. macOS attributes those
+notifications to **Script Editor**, so a `sound name` passed inside the AppleScript is governed by
+Script Editor's notification settings and can be dropped silently even while DeepSeek Harness's own
+sound setting is on.
+
+The plugin therefore resolves a configured name to an audio file in the sound directories and plays
+it with `afplay`. That makes the sound independent of the notification center — and, because
+`afplay` bypasses notification handling, it also ignores Focus / Do Not Disturb. Use `sound: ''` to
+silence the plugin, or `desktop: false` to keep only the browser channel. A name that resolves to no
+file still falls back to AppleScript's `sound name`, which is subject to the same Script Editor
+setting.
 
 ### Webhook payload
 
@@ -210,6 +224,11 @@ navigator.clearAppBadge();  // badge disappears
   classified (and is adopted then, so an already-waiting session still badges).
 - **An unserved settings namespace is reported.** If the profile row id and `ENTRY_ID` disagree, the
   client logs one warning instead of silently running on defaults.
+- **The macOS banner is posted by Script Editor.** `osascript display notification` is attributed to
+  Script Editor by macOS, and a `sound name` inside it obeys Script Editor's per-app sound setting.
+  The plugin resolves the configured sound to a file and plays it with `afplay` instead, so the sound
+  does not depend on the notification center. (`afplay` also ignores Focus/DND; `sound: ''` silences
+  the plugin.)
 - **Never break the loop.** Desktop spawns are detached and fire-and-forget; webhook failures are
   logged and swallowed. A notifier must never surface an error into the agent's turn.
 - **The host half is the anchor.** A client bundle is only served while its package's host entry is
@@ -217,12 +236,12 @@ navigator.clearAppBadge();  // badge disappears
 
 ## Compatibility
 
-Verified against DeepSeek Harness **0.2.1-rc.2**, and `engines.dsh` declares `^0.2.1-rc.2`. The
-installer refuses `dsh plugin add` for a package whose range does not match the running harness
-(unless that exact `package@version` is version-exempted with `dsh plugin allow-version`); a bundle
-that is already listed in a profile is only warned about, so the declared range is an install gate
-rather than a load gate. `client.js` is hand-written in the shape the client module system expects,
-so no build step and no source map are needed.
+Verified against DeepSeek Harness **0.2.1-rc.2** and **0.2.1-rc.3**, and `engines.dsh` declares
+`^0.2.1-rc.2`. The installer refuses `dsh plugin add` for a package whose range does not match the
+running harness (unless that exact `package@version` is version-exempted with
+`dsh plugin allow-version`); a bundle that is already listed in a profile is only warned about, so
+the declared range is an install gate rather than a load gate. `client.js` is hand-written in the
+shape the client module system expects, so no build step and no source map are needed.
 
 ## Local development
 

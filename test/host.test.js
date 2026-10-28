@@ -68,12 +68,20 @@ test('the webhook URL is a secret so it never crosses the settings wire', () => 
 
 /* --- sound resolution ----------------------------------------------------- */
 
-test('resolveSoundPath ignores names and empty values', () => {
+test('resolveSoundPath resolves system sound names to files', () => {
   assert.equal(resolveSoundPath(''), null)
   assert.equal(resolveSoundPath(undefined), null)
-  // A bare name is not a path: AppleScript resolves it against the system dirs.
-  assert.equal(resolveSoundPath('Glass'), null)
+  // A bare name is looked up with every supported audio extension.
+  const glass = resolveSoundPath('Glass')
+  if (glass === null) {
+    assert.notEqual(process.platform, 'darwin', 'macOS ships a Glass system sound')
+  } else {
+    assert.match(glass, /\/Sounds\/Glass\.(aif|aiff|caf|m4a|mp3|wav)$/)
+    // An explicit file name resolves to the same file, not "Glass.aiff.aiff".
+    assert.equal(resolveSoundPath('Glass.aiff'), glass)
+  }
   // A relative file name that does not exist resolves to nothing.
+  assert.equal(resolveSoundPath('dsh-notification-missing'), null)
   assert.equal(resolveSoundPath('dsh-notification-missing.wav'), null)
 })
 
@@ -136,11 +144,33 @@ test('desktopNotify plays a configured file through afplay on macOS', () => {
   assert.deepEqual(commands.map((call) => call.command), ['afplay', 'osascript'])
 })
 
-test('the default sound is a system name, not a machine-specific file', () => {
-  // A missing default file is silent on every machine that never had it, so the
-  // schema default must be a name AppleScript can resolve itself.
+test('desktopNotify plays a named system sound through afplay on macOS', () => {
+  if (process.platform !== 'darwin') return
+  const commands = []
+  const make = () => {
+    const emitter = new EventEmitter()
+    emitter.unref = () => {}
+    return emitter
+  }
+  desktopNotify('t', 'b', {
+    sound: 'Glass',
+    spawn: (command, args) => { commands.push({ command, args }); return make() },
+  })
+  assert.deepEqual(commands.map((call) => call.command), ['afplay', 'osascript'])
+  assert.match(commands[0].args[0], /\/Sounds\/Glass\.(aif|aiff|caf|m4a|mp3|wav)$/)
+  // The notification is silent: the resolved file already played.
+  assert.ok(!commands[1].args[1].includes('sound name'), commands[1].args[1])
+})
+
+test('the default sound is a system name that resolves to a standard sound file', () => {
+  // The default stays a name so a machine without the file still falls back to
+  // AppleScript's own lookup instead of pointing at a path that may not exist.
   assert.equal(Config.dict.sound.meta.default, 'Glass')
-  assert.equal(resolveSoundPath(Config.dict.sound.meta.default), null)
+  const path = resolveSoundPath(Config.dict.sound.meta.default)
+  if (process.platform === 'darwin') {
+    assert.ok(path, 'macOS ships a Glass system sound')
+    assert.match(path, /\/Sounds\/Glass\.(aif|aiff|caf|m4a|mp3|wav)$/)
+  }
 })
 
 /* --- Windows toasts ------------------------------------------------------- */
@@ -355,7 +385,7 @@ test('a failing webhook is logged, never thrown', async () => {
   }
 })
 
-test('a configured file that is missing never becomes a sound name', () => {
+test('only an unresolved bare name falls back to a sound name', () => {
   if (process.platform !== 'darwin') return
   const scripts = []
   const make = () => {
@@ -363,8 +393,16 @@ test('a configured file that is missing never becomes a sound name', () => {
     emitter.unref = () => {}
     return emitter
   }
-  desktopNotify('t', 'b', { sound: '/nowhere/missing.wav', spawn: (_c, args) => { scripts.push(args[1]); return make() } })
-  desktopNotify('t', 'b', { sound: 'Glass', spawn: (_c, args) => { scripts.push(args[1]); return make() } })
+  const spawn = (command, args) => {
+    if (command === 'osascript') scripts.push(args[1])
+    return make()
+  }
+  desktopNotify('t', 'b', { sound: '/nowhere/missing.wav', spawn })
+  desktopNotify('t', 'b', { sound: 'Glass', spawn })
+  desktopNotify('t', 'b', { sound: 'dsh-notification-missing', spawn })
   assert.ok(!scripts[0].includes('sound name'), scripts[0])
-  assert.ok(scripts[1].includes('sound name "Glass"'), scripts[1])
+  // Glass resolves to a system file, so afplay owns it and the notification is
+  // silent -- Script Editor's own sound setting must not be able to mute it.
+  assert.ok(!scripts[1].includes('sound name'), scripts[1])
+  assert.ok(scripts[2].includes('sound name "dsh-notification-missing"'), scripts[2])
 })

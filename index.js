@@ -54,8 +54,9 @@ export const Config = Schema.object({
     .volatile(),
   sound: Schema.string().default('Glass')
     .description('macOS: sound played alongside each desktop notification — a system sound name such as "Glass" '
-      + '(looked up in ~/Library/Sounds, /Library/Sounds and /System/Library/Sounds), or an audio file path '
-      + '(absolute, or relative to ~/Library/Sounds). Empty string keeps notifications silent.')
+      + '(resolved to an audio file in ~/Library/Sounds, /Library/Sounds and /System/Library/Sounds), or an audio '
+      + 'file path (absolute, or relative to ~/Library/Sounds). A resolved file plays through afplay, so it does '
+      + 'not depend on the notification center\'s per-app sound setting. Empty string keeps notifications silent.')
     .volatile(),
   windowsAppId: Schema.string().default('')
     .description('Windows: the AppUserModelID the toast is attributed to. Empty uses the registered identity of '
@@ -90,10 +91,16 @@ export const Config = Schema.object({
 })
 
 /* --- notification sounds --------------------------------------------------
- * A configured *file* plays through afplay, which reproduces the exact file
- * and needs no name lookup. A bare *name* (e.g. "Glass") is handed to
- * AppleScript's own `sound name`, which searches ~/Library/Sounds,
- * /Library/Sounds and /System/Library/Sounds.
+ * Both a configured *file* and a bare *name* (e.g. "Glass") play through
+ * afplay. Playing the resolved file ourselves keeps the sound independent of
+ * the notification center: an `osascript` notification is attributed to
+ * Script Editor on macOS, so a `sound name` inside it is governed by Script
+ * Editor's own sound setting and can be dropped silently. A name that resolves
+ * to no file still falls back to AppleScript's `sound name`, which searches
+ * ~/Library/Sounds, /Library/Sounds and /System/Library/Sounds.
+ *
+ * afplay bypasses the notification center entirely, so it also ignores Focus /
+ * Do Not Disturb. `sound: ''` is the way to silence this plugin.
  * ------------------------------------------------------------------------ */
 
 const SOUND_DIRS = [join(homedir(), 'Library', 'Sounds'), '/Library/Sounds', '/System/Library/Sounds']
@@ -105,7 +112,7 @@ function expandHome(sound) {
 
 /**
  * Whether a configured sound denotes a file (a path, or an audio extension to
- * look up in the sound directories) rather than a system sound name.
+ * look up in the sound directories) rather than a bare system sound name.
  */
 function looksLikeFile(sound) {
   const expanded = expandHome(sound)
@@ -113,16 +120,38 @@ function looksLikeFile(sound) {
     || AUDIO_EXTENSIONS.has(extname(expanded).toLowerCase())
 }
 
-/** Resolve a configured sound to an existing audio file; null means "not a file". */
-export function resolveSoundPath(sound) {
-  if (!sound) return null
-  if (!looksLikeFile(sound)) return null
+/** Candidate files for a configured sound, strongest first. */
+function soundCandidates(sound) {
   const expanded = expandHome(sound)
-  const candidates = isAbsolute(expanded) ? [expanded] : SOUND_DIRS.map((dir) => join(dir, expanded))
-  return candidates.find((candidate) => existsSync(candidate)) ?? null
+  if (isAbsolute(expanded)) return [expanded]
+  if (expanded.includes('/')) return SOUND_DIRS.map((dir) => join(dir, expanded))
+  // A value that already names an audio extension is an exact file name; a
+  // bare name is a system sound, which afplay needs with its extension.
+  if (AUDIO_EXTENSIONS.has(extname(expanded).toLowerCase())) {
+    return SOUND_DIRS.map((dir) => join(dir, expanded))
+  }
+  const candidates = []
+  for (const dir of SOUND_DIRS) {
+    for (const extension of AUDIO_EXTENSIONS) candidates.push(join(dir, `${expanded}${extension}`))
+  }
+  return candidates
 }
 
-/** Play an audio file detached; returns whether a file was found. Never throws. */
+/**
+ * Resolve a configured sound to an existing audio file; null means no file was
+ * found. A bare system sound name is looked up with every supported extension;
+ * `null` for such a name leaves AppleScript's `sound name` as the fallback.
+ */
+export function resolveSoundPath(sound) {
+  if (!sound) return null
+  return soundCandidates(sound).find((candidate) => existsSync(candidate)) ?? null
+}
+
+/**
+ * Play a configured sound detached; returns whether a file was found. Names are
+ * resolved to files so afplay, not the notification center, owns playback.
+ * Never throws.
+ */
 function playSound(spawn, sound) {
   const path = resolveSoundPath(sound)
   if (!path) return false
@@ -150,16 +179,19 @@ function playSound(spawn, sound) {
  * `deps.spawn` is injectable so the regression test can simulate an async
  * ENOENT without mutating `node:child_process` (a frozen built-in namespace),
  * and `deps.platform` so the Windows branch is testable off Windows. `deps.sound`
- * is the macOS sound: a file plays via afplay, a bare name is passed to
- * AppleScript as `sound name`.
+ * is the macOS sound: a file — or a bare system sound name, which is resolved
+ * to its file — plays via afplay; only a name that resolves to no file is
+ * passed to AppleScript as `sound name`.
  */
 export function desktopNotify(title, body, { spawn = nodeSpawn, sound = '', windowsAppId = '', platform = process.platform } = {}) {
   try {
     if (platform === 'darwin') {
       const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
       const played = playSound(spawn, sound)
-      // `sound name` is a *name* looked up in the system sound directories, so
-      // a configured path that did not resolve must not be handed to it.
+      // afplay got the resolved file, so the notification needs no `sound name`
+      // (which Script Editor's own sound setting can silence). Only an
+      // unresolved bare name still falls back to AppleScript's lookup; a
+      // configured path that did not resolve must not be handed to it.
       const soundClause = sound && !played && !looksLikeFile(sound) ? ` sound name "${esc(sound)}"` : ''
       spawn('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}"${soundClause}`],
         { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
